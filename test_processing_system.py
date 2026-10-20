@@ -4,6 +4,7 @@ import unittest
 from order_processing_system import (
     calculate_discount,
     calculate_shipping,
+    calculate_total,
     validate_order,
     calculate_order_subtotal,
     process_order,
@@ -277,14 +278,33 @@ class TestDiscount(unittest.TestCase):
             display_sales_report(report)
         self.assertIn("Test", buf.getvalue())
 
-    def test_get_unique_customers_handles_missing_customer(self):
+    def test_get_unique_customers_excludes_invalid_and_none(self):
+        products = {"P001": {"name": "Laptop", "price": 10, "stock": 10}}
         orders = [
-            {"customer": "Ali"},
-            {"items": []},
-        ]
-        result = get_unique_customers(orders)
-        self.assertIn("Ali", result)
+        {"order_id": "U1", "customer": "Ali", "payment_status": "paid",
+         "items": [{"product_id": "P001", "quantity": 1}]},
+        {"order_id": "U2", "customer": "Bob", "payment_status": "paid",
+         "items": [{"product_id": "UNKNOWN", "quantity": 1}]},   
+        {"order_id": "U3", "payment_status": "paid",
+         "items": [{"product_id": "P001", "quantity": 1}]},   
+    ]
+        processed = [process_order(o, products) for o in orders]
+        self.assertEqual(get_unique_customers(processed), {"Ali"})
+    
+    
+    def test_process_order_result_does_not_share_items(self):
+        products = {"P001": {"name": "Laptop", "price": 10, "stock": 10}}
+        order = {"order_id": "S1", "customer": "Test", "payment_status": "paid",
+             "items": [{"product_id": "P001", "quantity": 1}]}
+        result = process_order(order, products)
+        result["items"].append({"product_id": "P001", "quantity": 99})
+        result["items"][0]["quantity"] = 50
+        self.assertEqual(order["items"], [{"product_id": "P001", "quantity": 1}])
 
+    
+    def test_calculate_total_accepts_varargs(self):
+        self.assertEqual(calculate_total(10, 20, 30), 60)
+        self.assertEqual(calculate_total(), 0)
 
 if __name__ == "__main__":
     unittest.main()

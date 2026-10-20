@@ -75,7 +75,7 @@ def calculate_order_subtotal(order, products):
         products[item["product_id"]]["price"] * item["quantity"]
         for item in order["items"]
     ]
-    return sum(prices)
+    return calculate_total(*prices)
 
 def calculate_discount(subtotal):
     if subtotal >= 1000:
@@ -92,7 +92,10 @@ def calculate_shipping(subtotal):
         return 20
     else:
         return 0
-    
+
+
+def calculate_total(*prices):
+    return sum(prices) 
     
 def process_order(order,products,processed_order_ids = None,**kwargs):
     if processed_order_ids is None:
@@ -141,11 +144,12 @@ def process_order(order,products,processed_order_ids = None,**kwargs):
             products[product_id]["stock"] -= quantity
     processed_order_ids.add(order_id)
     success_report = {**order,
-              "status" : payment_status ,
-              "subtotal" : subtotal ,
-              "discount" : discount ,
-              "shipping" : shipping ,
-              "total" : updated_amount}
+                  "items": [dict(item) for item in order["items"]],
+                  "status": payment_status,
+                  "subtotal": subtotal,
+                  "discount": discount,
+                  "shipping": shipping,
+                  "total": updated_amount}
     return success_report
 
 
@@ -230,11 +234,12 @@ def generate_sales_report(processed_orders, products):
     return report
 
 
-def get_unique_customers(orders):
-    customers = set()
-    for order in orders:
-        customers.add(order.get("customer"))
-    return customers
+def get_unique_customers(processed_orders):
+    return {
+        order["customer"]
+        for order in processed_orders
+        if order["status"] in ["paid" , "pending"]
+    }
 
 
 def get_unique_categories(products):
@@ -312,7 +317,7 @@ def main(orders,products):
             ]
             print("All orders processed successfully.")
             order_processed = True
-        elif choice in ("2", "3", "4", "5") and not order_processed:
+        elif choice in ("2", "3", "4", "5", "6") and not order_processed:
             print("No orders processed yet. Choose option 1 first.")
         elif choice == "2":
             for order in processed_orders:
@@ -325,7 +330,7 @@ def main(orders,products):
             report = generate_sales_report(processed_orders, products)
             display_sales_report(report)
         elif choice == "6":
-            print(get_unique_customers(orders))
+            print(get_unique_customers(processed_orders))
         elif choice == "7":
             print(get_unique_categories(products))
         elif choice == "8":
