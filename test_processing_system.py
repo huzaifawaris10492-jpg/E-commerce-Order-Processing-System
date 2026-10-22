@@ -1,6 +1,7 @@
 import io
 import contextlib
 import unittest
+from decimal import Decimal
 from order_processing_system import (
     calculate_discount,
     calculate_shipping,
@@ -12,19 +13,21 @@ from order_processing_system import (
     generate_sales_report,
     generate_customer_report,
     display_sales_report,
-    get_unique_customers)
+    get_unique_customers,
+    validate_products,
+)
 
 
 class TestPricingCalculations(unittest.TestCase):
     def test_discount(self):
-        self.assertEqual(calculate_discount(100),0)
-        self.assertEqual(calculate_discount(200),10)
-        self.assertEqual(calculate_discount(500),50)
-        self.assertEqual(calculate_discount(1000),150)
+        self.assertEqual(calculate_discount(100), 0)
+        self.assertEqual(calculate_discount(200), 10)
+        self.assertEqual(calculate_discount(500), 50)
+        self.assertEqual(calculate_discount(1000), 150)
 
     def test_shipping(self):
-        self.assertEqual(calculate_shipping(500),0)
-        self.assertEqual(calculate_shipping(499),20)
+        self.assertEqual(calculate_shipping(500), 0)
+        self.assertEqual(calculate_shipping(499), 20)
 
     def test_calculate_order_subtotal(self):
         products = {
@@ -46,110 +49,97 @@ class TestPricingCalculations(unittest.TestCase):
 
 class TestValidateOrder(unittest.TestCase):
     def test_quantity(self):
-        products = {
-            "p102" : {
-                "name" : "mouse",
-                "price" : 20,
-                "stock" : 5
-            }
-        }
+        products = {"p102": {"name": "mouse", "price": 20, "stock": 5}}
 
         order = {
-            "order_id" : "T1",
-            "customer" : "Test",
-            "payment_status" : "paid",
-            "items" : [
-                {"product_id" : "p102" , "quantity" : 0}
-            ]
+            "order_id": "T1",
+            "customer": "Test",
+            "payment_status": "paid",
+            "items": [{"product_id": "p102", "quantity": 0}],
         }
-        self.assertFalse(validate_order(order,products)[0])
+        self.assertFalse(validate_order(order, products)[0])
 
     def test_missing_items(self):
         self.assertFalse(
             validate_order(
-                {"order_id": "T2", "customer": "Test", "payment_status": "paid"},
-                {}
+                {"order_id": "T2", "customer": "Test", "payment_status": "paid"}, {}
             )[0]
         )
 
     def test_missing_product_id(self):
-        products = {
-            "P001": {"price": 100, "stock": 5}
-        }
+        products = {"P001": {"price": 100, "stock": 5}}
         order = {
             "order_id": "T3",
             "customer": "Test",
             "payment_status": "paid",
-            "items": [{"quantity": 1}]
+            "items": [{"quantity": 1}],
         }
         self.assertFalse(validate_order(order, products)[0])
 
     def test_invalid_quantity(self):
-        products = {
-            "P001": {"price": 100, "stock": 5}
-        }
+        products = {"P001": {"price": 100, "stock": 5}}
         order = {
             "order_id": "T4",
             "customer": "Test",
             "payment_status": "paid",
-            "items": [{"product_id": "P001", "quantity": -1}]
+            "items": [{"product_id": "P001", "quantity": -1}],
         }
         self.assertFalse(validate_order(order, products)[0])
 
     def test_validate_order_sums_quantity_across_lines(self):
-        products = {
-            "P001": {"name": "Laptop", "price": 1200, "stock": 10}
-        }
+        products = {"P001": {"name": "Laptop", "price": 1200, "stock": 10}}
         order = {
-            "order_id": "T5", "customer": "Test", "payment_status": "paid",
+            "order_id": "T5",
+            "customer": "Test",
+            "payment_status": "paid",
             "items": [
                 {"product_id": "P001", "quantity": 10},
                 {"product_id": "P001", "quantity": 10},
-            ]
+            ],
         }
         self.assertFalse(validate_order(order, products)[0])
 
     def test_validate_order_rejects_negative_price(self):
-        products = {
-            "P001": {"name": "Test", "price": -50, "stock": 5}
-        }
+        products = {"P001": {"name": "Test", "price": -50, "stock": 5}}
         order = {
-            "order_id": "T6", "customer": "Test", "payment_status": "paid",
-            "items": [{"product_id": "P001", "quantity": 1}]
+            "order_id": "T6",
+            "customer": "Test",
+            "payment_status": "paid",
+            "items": [{"product_id": "P001", "quantity": 1}],
         }
         self.assertFalse(validate_order(order, products)[0])
 
     def test_validate_order_rejects_blank_order_id(self):
-        products = {
-            "P001": {"name": "Test", "price": 10, "stock": 5}
-        }
+        products = {"P001": {"name": "Test", "price": 10, "stock": 5}}
         order = {
-            "order_id": "   ", "customer": "Test", "payment_status": "paid",
-            "items": [{"product_id": "P001", "quantity": 1}]
+            "order_id": "   ",
+            "customer": "Test",
+            "payment_status": "paid",
+            "items": [{"product_id": "P001", "quantity": 1}],
         }
         is_valid, reason = validate_order(order, products)
         self.assertFalse(is_valid)
         self.assertEqual(reason, "missing order_id")
 
     def test_validate_order_rejects_blank_customer(self):
-        products = {
-            "P001": {"name": "Test", "price": 10, "stock": 5}
-        }
+        products = {"P001": {"name": "Test", "price": 10, "stock": 5}}
         order = {
-            "order_id": "T6b", "customer": "   ", "payment_status": "paid",
-            "items": [{"product_id": "P001", "quantity": 1}]
+            "order_id": "T6b",
+            "customer": "   ",
+            "payment_status": "paid",
+            "items": [{"product_id": "P001", "quantity": 1}],
         }
         is_valid, reason = validate_order(order, products)
         self.assertFalse(is_valid)
         self.assertEqual(reason, "missing customer")
 
     def test_validate_order_rejects_insufficient_stock(self):
-        products = {
-            "P001": {"name": "Test", "price": 10, "stock": 2}
-        }
+        products = {"P001": {"name": "Test", "price": 10, "stock": 2}}
         order = {
-            "order_id": "T6c", "customer": "Test", "payment_status": "paid",
-            "items": [{"product_id": "P001", "quantity": 5}]
+            "order_id": "T6c",
+            "customer": "Test",
+            "payment_status": "paid",
+            "items": [{"product_id": "P001", "quantity": 5}],
         }
         is_valid, reason = validate_order(order, products)
         self.assertFalse(is_valid)
@@ -158,37 +148,36 @@ class TestValidateOrder(unittest.TestCase):
 
 class TestProcessOrder(unittest.TestCase):
     def test_process_order_deducts_stock(self):
-        products = {
-            "P001": {"name": "Laptop", "price": 1200, "stock": 10}
-        }
+        products = {"P001": {"name": "Laptop", "price": 1200, "stock": 10}}
         order = {
-            "order_id": "T7", "customer": "Test", "payment_status": "paid",
-            "items": [{"product_id": "P001", "quantity": 3}]
+            "order_id": "T7",
+            "customer": "Test",
+            "payment_status": "paid",
+            "items": [{"product_id": "P001", "quantity": 3}],
         }
         result = process_order(order, products)
         self.assertEqual(result["status"], "paid")
         self.assertEqual(products["P001"]["stock"], 7)
-        
+
     def test_process_order_pending_does_not_deduct_stock(self):
-        products = {
-        "P001": {"name": "Laptop", "price": 1200, "stock": 10}
-    }
+        products = {"P001": {"name": "Laptop", "price": 1200, "stock": 10}}
         order = {
-        "order_id": "P1", "customer": "Test", "payment_status": "pending",
-        "items": [{"product_id": "P001", "quantity": 3}]
-    }
+            "order_id": "P1",
+            "customer": "Test",
+            "payment_status": "pending",
+            "items": [{"product_id": "P001", "quantity": 3}],
+        }
         result = process_order(order, products)
         self.assertEqual(result["status"], "pending")
         self.assertEqual(products["P001"]["stock"], 10)
-        
 
     def test_process_order_rejects_duplicate(self):
-        products = {
-            "P001": {"name": "Laptop", "price": 1200, "stock": 10}
-        }
+        products = {"P001": {"name": "Laptop", "price": 1200, "stock": 10}}
         order = {
-            "order_id": "T8", "customer": "Test", "payment_status": "paid",
-            "items": [{"product_id": "P001", "quantity": 1}]
+            "order_id": "T8",
+            "customer": "Test",
+            "payment_status": "paid",
+            "items": [{"product_id": "P001", "quantity": 1}],
         }
         processed_ids = set()
         first = process_order(order, products, processed_order_ids=processed_ids)
@@ -198,12 +187,12 @@ class TestProcessOrder(unittest.TestCase):
         self.assertEqual(second["reason"], "order already processed")
 
     def test_process_order_rejects_unknown_option(self):
-        products = {
-            "P001": {"name": "Laptop", "price": 1200, "stock": 10}
-        }
+        products = {"P001": {"name": "Laptop", "price": 1200, "stock": 10}}
         order = {
-            "order_id": "T8b", "customer": "Test", "payment_status": "paid",
-            "items": [{"product_id": "P001", "quantity": 1}]
+            "order_id": "T8b",
+            "customer": "Test",
+            "payment_status": "paid",
+            "items": [{"product_id": "P001", "quantity": 1}],
         }
         result = process_order(order, products, apply_discout=False)
         self.assertEqual(result["status"], "rejected")
@@ -211,12 +200,12 @@ class TestProcessOrder(unittest.TestCase):
         self.assertEqual(products["P001"]["stock"], 10)
 
     def test_process_order_apply_discount_false(self):
-        products = {
-            "P001": {"name": "Laptop", "price": 1200, "stock": 10}
-        }
+        products = {"P001": {"name": "Laptop", "price": 1200, "stock": 10}}
         order = {
-            "order_id": "T8c", "customer": "Test", "payment_status": "paid",
-            "items": [{"product_id": "P001", "quantity": 1}]
+            "order_id": "T8c",
+            "customer": "Test",
+            "payment_status": "paid",
+            "items": [{"product_id": "P001", "quantity": 1}],
         }
         result = process_order(order, products, apply_discount=False)
         self.assertEqual(result["discount"], 0)
@@ -224,8 +213,12 @@ class TestProcessOrder(unittest.TestCase):
 
     def test_process_order_result_does_not_share_items(self):
         products = {"P001": {"name": "Laptop", "price": 10, "stock": 10}}
-        order = {"order_id": "S1", "customer": "Test", "payment_status": "paid",
-             "items": [{"product_id": "P001", "quantity": 1}]}
+        order = {
+            "order_id": "S1",
+            "customer": "Test",
+            "payment_status": "paid",
+            "items": [{"product_id": "P001", "quantity": 1}],
+        }
         result = process_order(order, products)
         result["items"].append({"product_id": "P001", "quantity": 99})
         result["items"][0]["quantity"] = 50
@@ -239,8 +232,10 @@ class TestReports(unittest.TestCase):
             "P002": {"name": "Mouse", "price": 25, "stock": 50},
         }
         order = {
-            "order_id": "T9", "customer": "Test", "payment_status": "paid",
-            "items": [{"product_id": "P002", "quantity": 1}]
+            "order_id": "T9",
+            "customer": "Test",
+            "payment_status": "paid",
+            "items": [{"product_id": "P002", "quantity": 1}],
         }
         processed = [process_order(order, products)]
         report = generate_sales_report(processed, products)
@@ -252,63 +247,73 @@ class TestReports(unittest.TestCase):
             "P001": {"name": "Widget", "price": 100, "stock": 10},
         }
         order_a = {
-            "order_id": "TA1", "customer": "Ali", "payment_status": "paid",
-            "items": [{"product_id": "P001", "quantity": 1}]
+            "order_id": "TA1",
+            "customer": "Ali",
+            "payment_status": "paid",
+            "items": [{"product_id": "P001", "quantity": 1}],
         }
         order_b = {
-            "order_id": "TB1", "customer": "Zed", "payment_status": "paid",
-            "items": [{"product_id": "P001", "quantity": 1}]
+            "order_id": "TB1",
+            "customer": "Zed",
+            "payment_status": "paid",
+            "items": [{"product_id": "P001", "quantity": 1}],
         }
         processed = [
-            process_order(order_a, products, apply_discount=False, include_shipping=False),
-            process_order(order_b, products, apply_discount=False, include_shipping=False),
+            process_order(
+                order_a, products, apply_discount=False, include_shipping=False
+            ),
+            process_order(
+                order_b, products, apply_discount=False, include_shipping=False
+            ),
         ]
         report = generate_sales_report(processed, products)
         self.assertIn("Ali", report["top_customer"])
         self.assertIn("Zed", report["top_customer"])
         self.assertEqual(len(report["top_customer"]), 2)
-    
+
     def test_generate_sales_report_handles_tied_top_products(self):
         products = {
-        "P001": {"name": "Widget", "price": 100, "stock": 10},
-        "P002": {"name": "Gadget", "price": 100, "stock": 10},
-    }
+            "P001": {"name": "Widget", "price": 100, "stock": 10},
+            "P002": {"name": "Gadget", "price": 100, "stock": 10},
+        }
         order_a = {
-        "order_id": "PA1", "customer": "Ali", "payment_status": "paid",
-        "items": [{"product_id": "P001", "quantity": 1}]
-    }
+            "order_id": "PA1",
+            "customer": "Ali",
+            "payment_status": "paid",
+            "items": [{"product_id": "P001", "quantity": 1}],
+        }
         order_b = {
-        "order_id": "PB1", "customer": "Zed", "payment_status": "paid",
-        "items": [{"product_id": "P002", "quantity": 1}]
-    }
+            "order_id": "PB1",
+            "customer": "Zed",
+            "payment_status": "paid",
+            "items": [{"product_id": "P002", "quantity": 1}],
+        }
         processed = [
-        process_order(order_a, products),
-        process_order(order_b, products),
-    ]
+            process_order(order_a, products),
+            process_order(order_b, products),
+        ]
         report = generate_sales_report(processed, products)
         self.assertIn("Widget", report["top_selling_product"])
         self.assertIn("Gadget", report["top_selling_product"])
         self.assertEqual(len(report["top_selling_product"]), 2)
-    
+
     def test_generate_sales_report_counts_rejected_orders(self):
-        products = {
-        "P001": {"name": "Laptop", "price": 1200, "stock": 10}
-    }
+        products = {"P001": {"name": "Laptop", "price": 1200, "stock": 10}}
         order = {
-        "order_id": "R1", "customer": "Test", "payment_status": "paid",
-        "items": [{"product_id": "P001", "quantity": 1}]
-    }
+            "order_id": "R1",
+            "customer": "Test",
+            "payment_status": "paid",
+            "items": [{"product_id": "P001", "quantity": 1}],
+        }
         processed_ids = set()
         first = process_order(order, products, processed_order_ids=processed_ids)
         second = process_order(order, products, processed_order_ids=processed_ids)
         report = generate_sales_report([first, second], products)
         self.assertEqual(report["rejected_orders"], 1)
         self.assertEqual(report["paid_orders"], 1)
-    
+
     def test_generate_sales_report_handles_empty_orders(self):
-        products = {
-        "P001": {"name": "Laptop", "price": 1200, "stock": 10}
-    }
+        products = {"P001": {"name": "Laptop", "price": 1200, "stock": 10}}
         report = generate_sales_report([], products)
         self.assertEqual(report["total_orders"], 0)
         self.assertEqual(report["paid_orders"], 0)
@@ -317,17 +322,28 @@ class TestReports(unittest.TestCase):
         self.assertEqual(report["total_revenue"], 0)
         self.assertEqual(report["top_customer"], [])
         self.assertEqual(report["top_selling_product"], [])
-    
+
     def test_get_unique_customers_excludes_invalid_and_none(self):
         products = {"P001": {"name": "Laptop", "price": 10, "stock": 10}}
         orders = [
-        {"order_id": "U1", "customer": "Ali", "payment_status": "paid",
-         "items": [{"product_id": "P001", "quantity": 1}]},
-        {"order_id": "U2", "customer": "Bob", "payment_status": "paid",
-         "items": [{"product_id": "UNKNOWN", "quantity": 1}]},   
-        {"order_id": "U3", "payment_status": "paid",
-         "items": [{"product_id": "P001", "quantity": 1}]},   
-    ]
+            {
+                "order_id": "U1",
+                "customer": "Ali",
+                "payment_status": "paid",
+                "items": [{"product_id": "P001", "quantity": 1}],
+            },
+            {
+                "order_id": "U2",
+                "customer": "Bob",
+                "payment_status": "paid",
+                "items": [{"product_id": "UNKNOWN", "quantity": 1}],
+            },
+            {
+                "order_id": "U3",
+                "payment_status": "paid",
+                "items": [{"product_id": "P001", "quantity": 1}],
+            },
+        ]
         processed = [process_order(o, products) for o in orders]
         self.assertEqual(get_unique_customers(processed), {"Ali"})
 
@@ -335,10 +351,16 @@ class TestReports(unittest.TestCase):
 class TestDisplaySalesReport(unittest.TestCase):
     def test_display_sales_report_no_low_stock(self):
         report = {
-            "total_orders": 0, "paid_orders": 0, "pending_orders": 0,
-            "rejected_orders": 0, "total_revenue": 0, "total_discounts": 0,
-            "shipping_collected": 0, "top_customer": [],
-            "top_selling_product": [], "low_stock_products": {}
+            "total_orders": 0,
+            "paid_orders": 0,
+            "pending_orders": 0,
+            "rejected_orders": 0,
+            "total_revenue": 0,
+            "total_discounts": 0,
+            "shipping_collected": 0,
+            "top_customer": [],
+            "top_selling_product": [],
+            "low_stock_products": {},
         }
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
@@ -348,10 +370,16 @@ class TestDisplaySalesReport(unittest.TestCase):
 
     def test_display_sales_report_with_low_stock(self):
         report = {
-            "total_orders": 0, "paid_orders": 0, "pending_orders": 0,
-            "rejected_orders": 0, "total_revenue": 0, "total_discounts": 0,
-            "shipping_collected": 0, "top_customer": [],
-            "top_selling_product": [], "low_stock_products": {"P003": "Keyboard"}
+            "total_orders": 0,
+            "paid_orders": 0,
+            "pending_orders": 0,
+            "rejected_orders": 0,
+            "total_revenue": 0,
+            "total_discounts": 0,
+            "shipping_collected": 0,
+            "top_customer": [],
+            "top_selling_product": [],
+            "low_stock_products": {"P003": {"name": "Keyboard", "stock": 4}},
         }
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
@@ -366,8 +394,10 @@ class TestDisplaySalesReport(unittest.TestCase):
             "P001": {"name": "Laptop", "price": 1200, "stock": 10},
         }
         order = {
-            "order_id": "T10", "customer": "Test", "payment_status": "paid",
-            "items": [{"product_id": "P001", "quantity": 1}]
+            "order_id": "T10",
+            "customer": "Test",
+            "payment_status": "paid",
+            "items": [{"product_id": "P001", "quantity": 1}],
         }
         processed = [process_order(order, products)]
         report = generate_sales_report(processed, products)
@@ -375,14 +405,21 @@ class TestDisplaySalesReport(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             display_sales_report(report)
         self.assertIn("Test", buf.getvalue())
-        
+
+
 class TestEdgeCaseFixes(unittest.TestCase):
     def setUp(self):
         self.products = {
-            "P002": {"name": "Mouse", "price": 25, "category": "Accessories", "stock": 50}
+            "P002": {
+                "name": "Mouse",
+                "price": 25,
+                "category": "Accessories",
+                "stock": 50,
+            }
         }
         self.order = {
-            "order_id": "ORD1", "customer": "Ali",
+            "order_id": "ORD1",
+            "customer": "Ali",
             "items": [{"product_id": "P002", "quantity": 1}],
             "payment_status": "paid",
         }
@@ -397,7 +434,11 @@ class TestEdgeCaseFixes(unittest.TestCase):
         ids = set()
         first = dict(self.order, order_id="Unknown")
         self.assertEqual(process_order(first, self.products, ids)["status"], "paid")
-        no_id = {"customer": "Ali", "items": self.order["items"], "payment_status": "paid"}
+        no_id = {
+            "customer": "Ali",
+            "items": self.order["items"],
+            "payment_status": "paid",
+        }
         result = process_order(no_id, self.products, ids)
         self.assertEqual(result["status"], "rejected")
         self.assertEqual(result["reason"], "missing order_id")
@@ -407,6 +448,82 @@ class TestEdgeCaseFixes(unittest.TestCase):
         result = process_order(self.order, self.products, set())
         report = generate_product_report([result], self.products)
         self.assertEqual(report["P002"]["name"], "P002")
+
+
+class TestRecentFixes(unittest.TestCase):
+    def setUp(self):
+        self.products = {
+            "P002": {
+                "name": "Mouse",
+                "price": 25,
+                "category": "Accessories",
+                "stock": 50,
+            }
+        }
+
+    def make(self, order_id="ORD1", customer="Ali", qty=1):
+        return {
+            "order_id": order_id,
+            "customer": customer,
+            "items": [{"product_id": "P002", "quantity": qty}],
+            "payment_status": "paid",
+        }
+
+    def test_non_bool_option_is_rejected(self):
+        r = process_order(self.make(), self.products, set(), apply_discount="no")
+        self.assertEqual(
+            (r["status"], r["reason"]), ("rejected", "apply_discount must be a bool")
+        )
+        self.assertEqual(self.products["P002"]["stock"], 50)
+
+    def test_unknown_option_reported_before_validation_error(self):
+        bad = {
+            "order_id": "X",
+            "customer": "Ali",
+            "items": [],
+            "payment_status": "paid",
+        }
+        r = process_order(bad, self.products, set(), apply_discout=True)
+        self.assertEqual(r["reason"], "unknown option(s): apply_discout")
+
+    def test_order_id_whitespace_and_case_are_duplicates(self):
+        ids = set()
+        self.assertEqual(
+            process_order(self.make("ORD1"), self.products, ids)["status"], "paid"
+        )
+        for dup in ("ORD1 ", "ord1"):
+            r = process_order(self.make(dup), self.products, ids)
+            self.assertEqual(r["reason"], "order already processed")
+        self.assertEqual(self.products["P002"]["stock"], 49)
+
+    def test_customer_names_group_ignoring_case_and_spaces(self):
+        ids = set()
+        results = [
+            process_order(self.make(f"O{i}", c), self.products, ids)
+            for i, c in enumerate(["Ali", "Ali ", "ali"])
+        ]
+        self.assertEqual(get_unique_customers(results), {"Ali"})
+        self.assertEqual(list(generate_customer_report(results)), ["Ali"])
+
+    def test_customer_name_keeps_original_capitalisation(self):
+        r = process_order(self.make(customer=" McDonald "), self.products, set())
+        self.assertEqual(r["customer"], "McDonald")
+
+    def test_money_uses_decimal_rounding(self):
+        self.products["P002"]["price"] = 0.1
+        r = process_order(self.make(qty=3), self.products, set())
+        self.assertEqual(r["subtotal"], Decimal("0.30"))
+        self.products["P002"]["price"] = 0.333
+        r = process_order(self.make("ORD2"), self.products, set())
+        self.assertEqual(r["subtotal"], Decimal("0.33"))
+
+
+class TestValidateProducts(unittest.TestCase):
+    def test_rejects_product_without_category(self):
+        products = {"P1": {"name": "Mouse", "price": 25, "stock": 5}}
+        with self.assertRaises(ValueError):
+            validate_products(products)
+
 
 if __name__ == "__main__":
     unittest.main()

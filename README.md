@@ -25,8 +25,8 @@ levels, and generates sales and customer reports.
 - **Pricing** — tiered discounts based on subtotal (15% at $1,000+, 10% at
   $500+, 5% at $200+), plus a flat $20 shipping charge for orders under $500
   (free shipping at $500 and above).
-- **Stock management** — paid orders deduct stock; products below 5 units are
-  flagged as low stock.
+- **Stock management** — paid orders deduct stock; products with 10 units or
+  fewer are flagged as low stock, with the remaining count shown..
 - **Reporting**
   - Customer spending report
   - Product sales report (units sold per product)
