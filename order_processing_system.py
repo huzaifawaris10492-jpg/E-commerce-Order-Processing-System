@@ -32,6 +32,16 @@ orders = [
     }
 ]
 
+MAX_PRICE = 1_000_000
+DISCOUNT_TIERS = (
+    (Decimal("1000"), Decimal("0.15")),
+    (Decimal("500"),  Decimal("0.10")),
+    (Decimal("200"),  Decimal("0.05")),
+)
+FREE_SHIPPING_THRESHOLD = Decimal("500")
+SHIPPING_COST = Decimal("20")
+LOW_STOCK_LIMIT = 5
+
 
 def validate_order(order,products):
     requested_quantity = {}
@@ -60,7 +70,7 @@ def validate_order(order,products):
             return False , "invalid product format"
         price = product.get("price")
         stock = product.get("stock")
-        if isinstance(price, bool) or not isinstance(price, (int, float)) or price < 0:
+        if isinstance(price, bool) or not isinstance(price, (int, float)) or not (0 <= price <= MAX_PRICE):
             return False , f"invalid price for {product_id}"
         if isinstance(stock, bool) or not isinstance(stock, int):
             return False , "invalid stock format"
@@ -73,29 +83,19 @@ def validate_order(order,products):
     return True , ""
     
 
-
 def to_money(value):
     return Decimal(str(value))
 
 def round_money(value):
     return value.quantize(Decimal("0.01") , rounding = ROUND_HALF_UP)
 
-DISCOUNT_TIERS = (
-    (Decimal("1000"), Decimal("0.15")),
-    (Decimal("500"),  Decimal("0.10")),
-    (Decimal("200"),  Decimal("0.05")),
-)
-FREE_SHIPPING_THRESHOLD = Decimal("500")
-SHIPPING_COST = Decimal("20")
-LOW_STOCK_LIMIT = 5
-
 
 def calculate_order_subtotal(order, products):
     prices = [
-        to_money(products[item["product_id"]]["price"] * item["quantity"])
+        to_money(products[item["product_id"]]["price"]) * item["quantity"]
         for item in order["items"]
     ]
-    return calculate_total(*prices)
+    return round_money(calculate_total(*prices))
 
 def calculate_discount(subtotal):
     subtotal = to_money(subtotal)   
@@ -117,13 +117,17 @@ def calculate_total(*prices):
 def process_order(order,products,processed_order_ids = None,**kwargs):
     if processed_order_ids is None:
         processed_order_ids = set()
+    elif not isinstance(processed_order_ids, set):
+        raise TypeError("processed_order_ids must be a set")
     order_id = "Unknown"
+    has_valid_id = False
     customer = None
     if isinstance(order, dict):
         if isinstance(order.get("order_id"), str):
-            order_id = order["order_id"].strip()
-        if isinstance(order.get("customer"),str):
-            customer = order["customer"].strip()
+            order_id = order["order_id"].strip().upper()
+            has_valid_id = bool(order_id)
+        if isinstance(order.get("customer"), str):
+            customer = order["customer"].strip().title()
         else:
             customer = order.get("customer")
         
@@ -135,7 +139,7 @@ def process_order(order,products,processed_order_ids = None,**kwargs):
             "reason": "order should be a dict"
         }
         
-    if order_id in processed_order_ids:
+    if has_valid_id and order_id in processed_order_ids:
         return {
             "order_id" : order_id,
             "customer" : customer,
@@ -212,7 +216,7 @@ def generate_product_report(processed_orders,products):
                 
     product_report = {}
     for product_id , quantity in units_sold.items():
-        product_name = products[product_id]["name"]
+        product_name = products[product_id].get("name", product_id)
         product_report[product_id] = {
             "name" : product_name ,
             "units_sold" : quantity
@@ -257,7 +261,7 @@ def generate_sales_report(processed_orders, products):
     low_stock_products = {}
     for product_id, product in products.items():
         if product["stock"] < LOW_STOCK_LIMIT:
-            low_stock_products[product_id] = product["name"]
+            low_stock_products[product_id] = product.get("name", product_id)
     report = {
         "total_orders": total_orders,
         "paid_orders": paid_orders,
@@ -309,10 +313,10 @@ def display_sales_report(report):
     for customer in report["top_customer"]:
         print(f'- {customer}')
     
-    print("Top Selling product(s)")
+    print("Top Selling product(s):")
     for product in report["top_selling_product"]:
         print(f'- {product}')
-    print("Low Stock Products: ")
+    print("Low Stock Products:")
     if report['low_stock_products']:
         for product_id , name in report['low_stock_products'].items():
             print(f"- {name} ({product_id})")
@@ -375,7 +379,7 @@ def main(orders,products):
 
         try:
             choice = input("Enter your choice: ").strip()
-        except EOFError:
+        except (EOFError, KeyboardInterrupt):
             print("\nNo more input. Exiting Order Processing System.")
             break
         if choice == "1":
@@ -401,9 +405,10 @@ def main(orders,products):
             report = generate_sales_report(processed_orders, products)
             display_sales_report(report)
         elif choice == "6":
-            display_customer_report(get_unique_customers(processed_orders))
+            display_unique_customers(get_unique_customers(processed_orders))
         elif choice == "7":
-            print(get_unique_categories(products))
+            for category in sorted(get_unique_categories(products)):
+                print(f"- {category}")
         elif choice == "8":
             for product_id, product in sort_products_by_price(products):
                 print(f"{product_id} | {product['name']} | "

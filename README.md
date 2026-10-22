@@ -39,6 +39,7 @@ levels, and generates sales and customer reports.
   validation (missing/blank fields, bad quantities, unknown products,
   insufficient stock), duplicate-order rejection, unknown-option rejection,
   the `apply_discount` option, tied top customers, and report display.
+- **Customer names** — trimmed and case-insensitive ("Ali", "Ali " and "ali" are one customer, stored as "Ali").
 
 ## Requirements
 
@@ -83,9 +84,10 @@ All tests should pass.
 
 ## Project Structure
 
+```text
 EcommerceProject
-├── order_processing_system.py # Main application
-├── test_processing_system.py # Unit tests
+├── order_processing_system.py   # Main application
+├── test_processing_system.py    # Unit tests
 └── README.md
+```
 
-# E-commerce-Order-Processing-System

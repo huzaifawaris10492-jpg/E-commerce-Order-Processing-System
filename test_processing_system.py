@@ -7,6 +7,7 @@ from order_processing_system import (
     calculate_total,
     validate_order,
     calculate_order_subtotal,
+    generate_product_report,
     process_order,
     generate_sales_report,
     generate_customer_report,
@@ -374,7 +375,38 @@ class TestDisplaySalesReport(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             display_sales_report(report)
         self.assertIn("Test", buf.getvalue())
+        
+class TestEdgeCaseFixes(unittest.TestCase):
+    def setUp(self):
+        self.products = {
+            "P002": {"name": "Mouse", "price": 25, "category": "Accessories", "stock": 50}
+        }
+        self.order = {
+            "order_id": "ORD1", "customer": "Ali",
+            "items": [{"product_id": "P002", "quantity": 1}],
+            "payment_status": "paid",
+        }
 
+    def test_nan_price_is_rejected_not_crashed(self):
+        self.products["P002"]["price"] = float("nan")
+        result = process_order(self.order, self.products, set())
+        self.assertEqual(result["status"], "rejected")
+        self.assertEqual(result["reason"], "invalid price for P002")
+
+    def test_missing_order_id_after_order_named_unknown(self):
+        ids = set()
+        first = dict(self.order, order_id="Unknown")
+        self.assertEqual(process_order(first, self.products, ids)["status"], "paid")
+        no_id = {"customer": "Ali", "items": self.order["items"], "payment_status": "paid"}
+        result = process_order(no_id, self.products, ids)
+        self.assertEqual(result["status"], "rejected")
+        self.assertEqual(result["reason"], "missing order_id")
+
+    def test_product_report_handles_missing_name(self):
+        del self.products["P002"]["name"]
+        result = process_order(self.order, self.products, set())
+        report = generate_product_report([result], self.products)
+        self.assertEqual(report["P002"]["name"], "P002")
 
 if __name__ == "__main__":
     unittest.main()
