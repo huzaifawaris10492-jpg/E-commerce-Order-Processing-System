@@ -83,11 +83,9 @@ All tests should pass.
 
 ## Project Structure
 
-EcomerceProject/
+EcommerceProject
 ├── order_processing_system.py # Main application
 ├── test_processing_system.py # Unit tests
 └── README.md
 
-# E-commerce-order-processing-system
-# E-commerce-Order-Processing-System
 # E-commerce-Order-Processing-System

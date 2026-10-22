@@ -1,3 +1,6 @@
+import copy
+from decimal import Decimal, ROUND_HALF_UP
+
 products = {
     "P001": {"name": "Laptop", "price": 1200, "category": "Electronics", "stock": 10},
     "P002": {"name": "Mouse", "price": 25, "category": "Accessories", "stock": 50},
@@ -51,7 +54,7 @@ def validate_order(order,products):
         quantity = item.get("quantity")
         product_id = item.get("product_id")
         if not isinstance(product_id, str) or product_id not in products:
-            return False , "invalid product_id"
+            return False , f"invalid product_id: {product_id!r}"
         product = products[product_id]
         if not isinstance(product, dict):
             return False , "invalid product format"
@@ -70,32 +73,46 @@ def validate_order(order,products):
     return True , ""
     
 
+
+def to_money(value):
+    return Decimal(str(value))
+
+def round_money(value):
+    return value.quantize(Decimal("0.01") , rounding = ROUND_HALF_UP)
+
+DISCOUNT_TIERS = (
+    (Decimal("1000"), Decimal("0.15")),
+    (Decimal("500"),  Decimal("0.10")),
+    (Decimal("200"),  Decimal("0.05")),
+)
+FREE_SHIPPING_THRESHOLD = Decimal("500")
+SHIPPING_COST = Decimal("20")
+LOW_STOCK_LIMIT = 5
+
+
 def calculate_order_subtotal(order, products):
     prices = [
-        products[item["product_id"]]["price"] * item["quantity"]
+        to_money(products[item["product_id"]]["price"] * item["quantity"])
         for item in order["items"]
     ]
     return calculate_total(*prices)
 
 def calculate_discount(subtotal):
-    if subtotal >= 1000:
-        return round(subtotal * 0.15 , 2)
-    elif subtotal >= 500:
-        return round(subtotal * 0.10 , 2)
-    elif subtotal >= 200:
-        return round(subtotal * 0.05 , 2)
-    return 0
+    subtotal = to_money(subtotal)   
+    for threshold, rate in DISCOUNT_TIERS:
+        if subtotal >= threshold:
+            return round_money(subtotal * rate)   
+    return Decimal("0.00")
 
 
 def calculate_shipping(subtotal):
-    if subtotal < 500:
-        return 20
-    else:
-        return 0
+    subtotal = to_money(subtotal)
+    return SHIPPING_COST if subtotal < FREE_SHIPPING_THRESHOLD else Decimal("0")
 
 
 def calculate_total(*prices):
-    return sum(prices) 
+    return sum((to_money(p) for p in prices) , Decimal("0"))
+
     
 def process_order(order,products,processed_order_ids = None,**kwargs):
     if processed_order_ids is None:
@@ -104,8 +121,20 @@ def process_order(order,products,processed_order_ids = None,**kwargs):
     customer = None
     if isinstance(order, dict):
         if isinstance(order.get("order_id"), str):
-            order_id = order["order_id"]
-        customer = order.get("customer")
+            order_id = order["order_id"].strip()
+        if isinstance(order.get("customer"),str):
+            customer = order["customer"].strip()
+        else:
+            customer = order.get("customer")
+        
+    if not isinstance(order, dict):
+        return {
+            "order_id": order_id,
+            "customer": customer,
+            "status": "rejected",
+            "reason": "order should be a dict"
+        }
+        
     if order_id in processed_order_ids:
         return {
             "order_id" : order_id,
@@ -129,21 +158,31 @@ def process_order(order,products,processed_order_ids = None,**kwargs):
             "status" : "rejected",
             "reason" : f"unknown option(s): {', '.join(sorted(unexpected))}"
         }
+    for option_name in ("apply_discount", "include_shipping"):
+        if option_name in kwargs and not isinstance(kwargs[option_name], bool):
+            return {
+            "order_id": order_id,
+            "customer": customer,
+            "status": "rejected",
+            "reason": f"{option_name} must be a bool"
+        }
     payment_status = order.get("payment_status")
     apply_discount = kwargs.get("apply_discount", True)
     include_shipping = kwargs.get("include_shipping", True)
     subtotal = calculate_order_subtotal(order,products) 
-    discount = calculate_discount(subtotal) if apply_discount else 0
+    discount = calculate_discount(subtotal) if apply_discount else Decimal("0")
     final_amount = subtotal - discount
-    shipping = calculate_shipping(subtotal) if include_shipping else 0
-    updated_amount = round(final_amount + shipping , 2)
+    shipping = calculate_shipping(subtotal) if include_shipping else Decimal("0")
+    updated_amount = round_money(final_amount + shipping)
     if payment_status == "paid":    
-        for items in order["items"]:
-            product_id = items["product_id"]
-            quantity = items["quantity"]
+        for item in order["items"]:
+            product_id = item["product_id"]
+            quantity = item["quantity"]
             products[product_id]["stock"] -= quantity
     processed_order_ids.add(order_id)
     success_report = {**order,
+                  "order_id" : order_id,
+                  "customer" : customer,
                   "items": [dict(item) for item in order["items"]],
                   "status": payment_status,
                   "subtotal": subtotal,
@@ -217,7 +256,7 @@ def generate_sales_report(processed_orders, products):
         top_selling_products = []
     low_stock_products = {}
     for product_id, product in products.items():
-        if product["stock"] < 5:
+        if product["stock"] < LOW_STOCK_LIMIT:
             low_stock_products[product_id] = product["name"]
     report = {
         "total_orders": total_orders,
@@ -258,7 +297,7 @@ def sort_products_by_price(products):
 
     
 def display_sales_report(report):
-    print("\n========== SALES REPORT ===========")
+    print("\n============ SALES REPORT =============")
     print(f"Total Orders: {report['total_orders']}")
     print(f"Paid Orders: {report['paid_orders']}")
     print(f"Pending Orders: {report['pending_orders']}")
@@ -270,20 +309,52 @@ def display_sales_report(report):
     for customer in report["top_customer"]:
         print(f'- {customer}')
     
-    print("Top selling product")
+    print("Top Selling product(s)")
     for product in report["top_selling_product"]:
         print(f'- {product}')
-    print("Low Stock Products")
+    print("Low Stock Products: ")
     if report['low_stock_products']:
         for product_id , name in report['low_stock_products'].items():
             print(f"- {name} ({product_id})")
     else: 
         print("- None")
     
-    print("============================================")
+    print("=======================================")
 
 
-import copy
+def display_processed_order(order):
+    if order["status"] == "rejected":
+        print(f"- {order['order_id']} | {order.get('customer')} | "
+              f"status: rejected | reason: {order['reason']}")
+    else:
+        print(f"- {order['order_id']} | {order.get('customer')} | "
+              f"status: {order['status']} | total: {order.get('total', 0):.2f}")
+        
+
+def display_customer_report(customer_spending):
+    if not customer_spending:
+        print("- None")
+        return
+    for customer, spent in customer_spending.items():
+        print(f"- {customer}: {spent:.2f}")
+        
+        
+def display_product_report(product_report):
+    if not product_report:
+        print("- None")
+        return
+    for product_id, info in product_report.items():
+        print(f"- {product_id} | {info['name']} | units sold: {info['units_sold']}")
+
+
+def display_unique_customers(customers):
+    if not customers:
+        print("- None")
+        return
+    for customer in sorted(customers):
+        print(f"- {customer}")
+
+
 def main(orders,products):
     processed_order_ids = set()
     order_processed = False
@@ -321,16 +392,16 @@ def main(orders,products):
             print("No orders processed yet. Choose option 1 first.")
         elif choice == "2":
             for order in processed_orders:
-                print(order)
+                display_processed_order(order)
         elif choice == "3":
-            print(generate_customer_report(processed_orders))
+            display_customer_report(generate_customer_report(processed_orders))
         elif choice == "4":
-            print(generate_product_report(processed_orders, products))
+            display_product_report(generate_product_report(processed_orders, products))
         elif choice == "5":
             report = generate_sales_report(processed_orders, products)
             display_sales_report(report)
         elif choice == "6":
-            print(get_unique_customers(processed_orders))
+            display_customer_report(get_unique_customers(processed_orders))
         elif choice == "7":
             print(get_unique_categories(products))
         elif choice == "8":
