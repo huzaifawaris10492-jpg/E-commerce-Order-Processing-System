@@ -1,14 +1,14 @@
 import copy
 from decimal import Decimal, ROUND_HALF_UP
 
-products = {
+SAMPLE_PRODUCTS = {
     "P001": {"name": "Laptop", "price": 1200, "category": "Electronics", "stock": 10},
     "P002": {"name": "Mouse", "price": 25, "category": "Accessories", "stock": 50},
     "P003": {"name": "Keyboard", "price": 75, "category": "Accessories", "stock": 20},
     "P004": {"name": "Monitor", "price": 300, "category": "Electronics", "stock": 15},
 }
 
-orders = [
+SAMPLE_ORDERS = [
     {
         "order_id": "ORD001",
         "customer": "Ali",
@@ -45,6 +45,13 @@ FREE_SHIPPING_THRESHOLD = Decimal("500")
 SHIPPING_COST = Decimal("20")
 LOW_STOCK_LIMIT = 10
 
+def _valid_price(price):
+    return (
+        not isinstance(price, bool)
+        and isinstance(price, (int, float))
+        and 0 <= price <= MAX_PRICE
+    )
+
 
 def validate_order(order, products):
     requested_quantity = {}
@@ -73,11 +80,7 @@ def validate_order(order, products):
             return False, "invalid product format"
         price = product.get("price")
         stock = product.get("stock")
-        if (
-            isinstance(price, bool)
-            or not isinstance(price, (int, float))
-            or not (0 <= price <= MAX_PRICE)
-        ):
+        if not _valid_price(price):
             return False, f"invalid price for {product_id}"
         if isinstance(stock, bool) or not isinstance(stock, int):
             return False, "invalid stock format"
@@ -102,11 +105,7 @@ def validate_products(products):
             if not isinstance(product.get(key), str):
                 raise ValueError(f"{product_id}: missing or invalid {key}")
         price, stock = product.get("price"), product.get("stock")
-        if (
-            isinstance(price, bool)
-            or not isinstance(price, (int, float))
-            or not (0 <= price <= MAX_PRICE)
-        ):
+        if not _valid_price(price):
             raise ValueError(f"{product_id}: invalid price")
         if isinstance(stock, bool) or not isinstance(stock, int) or stock < 0:
             raise ValueError(f"{product_id}: invalid stock")
@@ -149,7 +148,8 @@ def rejected(order_id, customer, reason):
     return {
         "order_id": order_id,
         "customer": customer,
-        "status": "rejected",
+        "outcome" : "rejected",
+        "payment_status": None,
         "reason": reason,
     }
 
@@ -198,18 +198,23 @@ def process_order(order, products, processed_order_ids=None, **kwargs):
     final_amount = subtotal - discount
     shipping = calculate_shipping(subtotal) if include_shipping else Decimal("0")
     updated_amount = round_money(final_amount + shipping)
-    if payment_status == "paid":
-        for item in order["items"]:
-            product_id = item["product_id"]
-            quantity = item["quantity"]
-            products[product_id]["stock"] -= quantity
+    for item in order["items"]:
+        products[item["product_id"]]["stock"] -= item["quantity"]
     processed_order_ids.add(order_id)
     success_report = {
         **order,
         "order_id": order_id,
         "customer": customer,
-        "items": [dict(item) for item in order["items"]],
-        "status": payment_status,
+        "items": [
+            {
+                **item,
+                "name": products[item["product_id"]].get("name", item["product_id"]),
+                "unit_price": products[item["product_id"]]["price"],
+            }
+            for item in order["items"]
+        ],
+        "payment_status": payment_status,
+        "outcome" : "accepted",
         "subtotal": subtotal,
         "discount": discount,
         "shipping": shipping,
@@ -218,11 +223,31 @@ def process_order(order, products, processed_order_ids=None, **kwargs):
     return success_report
 
 
+def mark_paid(order_id, processed_orders):
+    if not isinstance(order_id, str):
+        return None, "order_id must be a string"
+    order_id = order_id.strip().upper()
+    if not isinstance(processed_orders, list):
+        raise TypeError("processed_orders must be a list")
+    for processed in processed_orders:
+        if not isinstance(processed, dict):
+            continue
+        if processed.get("order_id") != order_id:
+            continue
+        if processed.get("payment_status") == "paid":
+            return None, "order already paid"
+        if processed.get("payment_status") != "pending":
+            return None, "order is not pending"
+        processed["payment_status"] = "paid"
+        return processed, ""
+    return None, "order not found"
+
+
 def generate_customer_report(processed_orders):
     spending = {}
     display_names = {}
     for order in processed_orders:
-        if order["status"] == "paid":
+        if order["payment_status"] == "paid":
             key = order["customer"].casefold()
             display_names.setdefault(key, order["customer"])
             spending[key] = spending.get(key, Decimal("0")) + order["total"]
@@ -231,17 +256,18 @@ def generate_customer_report(processed_orders):
 
 def generate_product_report(processed_orders, products):
     units_sold = {}
+    names = {}
     for order in processed_orders:
-        if order["status"] == "paid":
+        if order["payment_status"] == "paid":
             for item in order["items"]:
                 product_id = item["product_id"]
                 quantity = item["quantity"]
                 units_sold[product_id] = units_sold.get(product_id, 0) + quantity
+                names[product_id] = item.get("name", product_id)
 
     product_report = {}
     for product_id, quantity in units_sold.items():
-        product_name = products[product_id].get("name", product_id)
-        product_report[product_id] = {"name": product_name, "units_sold": quantity}
+        product_report[product_id] = {"name": names[product_id], "units_sold": quantity}
     return product_report
 
 
@@ -251,17 +277,19 @@ def generate_sales_report(processed_orders, products):
     pending_orders = 0
     rejected_orders = 0
     total_revenue = Decimal("0")
+    revenue_excl_shipping = Decimal("0")
     total_discounts = Decimal("0")
     shipping_collected = Decimal("0")
     for order in processed_orders:
-        if order["status"] == "paid":
+        if order["payment_status"] == "paid":
             paid_orders += 1
             total_revenue += order["total"]
+            revenue_excl_shipping += order["total"] - order["shipping"]
             total_discounts += order["discount"]
             shipping_collected += order["shipping"]
-        elif order["status"] == "pending":
+        elif order["payment_status"] == "pending":
             pending_orders += 1
-        elif order["status"] == "rejected":
+        elif order["outcome"] == "rejected":
             rejected_orders += 1
     customer_spending = generate_customer_report(processed_orders)
     if customer_spending:
@@ -299,6 +327,7 @@ def generate_sales_report(processed_orders, products):
         "pending_orders": pending_orders,
         "rejected_orders": rejected_orders,
         "total_revenue": total_revenue,
+        "revenue_excl_shipping": revenue_excl_shipping,
         "total_discounts": total_discounts,
         "shipping_collected": shipping_collected,
         "top_customer": top_customers,
@@ -311,7 +340,7 @@ def generate_sales_report(processed_orders, products):
 def get_unique_customers(processed_orders):
     names = {}
     for order in processed_orders:
-        if order["status"] in ("paid", "pending"):
+        if order["payment_status"] in ("paid", "pending"):
             names.setdefault(order["customer"].casefold(), order["customer"])
     return set(names.values())
 
@@ -334,7 +363,8 @@ def display_sales_report(report):
     print(f"Paid Orders: {report['paid_orders']}")
     print(f"Pending Orders: {report['pending_orders']}")
     print(f"Rejected Orders: {report['rejected_orders']}")
-    print(f"Total Revenue: ${report['total_revenue']:,.2f}")
+    print(f"Total Revenue (incl. shipping): ${report['total_revenue']:,.2f}")
+    print(f"Total Revenue (excl. shipping): ${report['revenue_excl_shipping']:,.2f}")
     print(f"Total Discount: ${report['total_discounts']:,.2f}")
     print(f"Total Shipping: ${report['shipping_collected']:,.2f}")
     print("Top Customer(s):")
@@ -355,7 +385,7 @@ def display_sales_report(report):
 
 
 def display_processed_order(order):
-    if order["status"] == "rejected":
+    if order["outcome"] == "rejected":
         print(
             f"- {order['order_id']} | {order.get('customer')} | "
             f"status: rejected | reason: {order['reason']}"
@@ -363,7 +393,7 @@ def display_processed_order(order):
     else:
         print(
             f"- {order['order_id']} | {order.get('customer')} | "
-            f"status: {order['status']} | total: {order.get('total', 0):.2f}"
+            f"status: {order['payment_status']} | total: {order.get('total', 0):.2f}"
         )
 
 
@@ -408,7 +438,8 @@ def main(orders, products):
         print("6.Unique customers")
         print("7.Unique product categories")
         print("8.Products sorted by price")
-        print("9.Exit")
+        print("9.Mark a pending order as paid")
+        print("10.Exit")
 
         try:
             choice = input("Enter your choice: ").strip()
@@ -425,7 +456,7 @@ def main(orders, products):
             ]
             print("All orders processed successfully.")
             order_processed = True
-        elif choice in ("2", "3", "4", "5", "6") and not order_processed:
+        elif choice in ("2", "3", "4", "5", "6", "9") and not order_processed:
             print("No orders processed yet. Choose option 1 first.")
         elif choice == "2":
             for order in processed_orders:
@@ -449,11 +480,18 @@ def main(orders, products):
                     f"Price: {product['price']} | Stock: {product['stock']}"
                 )
         elif choice == "9":
+            order_id = input("Enter the order ID to mark as paid: ").strip()
+            updated_order, error = mark_paid(order_id, processed_orders)
+            if error or not updated_order:
+                print(f"Could not mark paid: {error or 'order not found'}")
+            else:
+                print(f"{updated_order['order_id']} is now marked as paid.")
+        elif choice == "10":
             print("Exiting Order Processing System.")
             break
         else:
-            print("Invalid choice. Please enter a number from 1 to 9.")
+            print("Invalid choice. Please enter a number from 1 to 10.")
 
 
 if __name__ == "__main__":
-    main(orders, products)
+    main(SAMPLE_ORDERS,SAMPLE_PRODUCTS)

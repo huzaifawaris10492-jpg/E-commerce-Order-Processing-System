@@ -10,13 +10,13 @@ from order_processing_system import (
     calculate_order_subtotal,
     generate_product_report,
     process_order,
+    mark_paid,
     generate_sales_report,
     generate_customer_report,
     display_sales_report,
     get_unique_customers,
     validate_products,
 )
-
 
 class TestPricingCalculations(unittest.TestCase):
     def test_discount(self):
@@ -45,7 +45,6 @@ class TestPricingCalculations(unittest.TestCase):
     def test_calculate_total_accepts_varargs(self):
         self.assertEqual(calculate_total(10, 20, 30), 60)
         self.assertEqual(calculate_total(), 0)
-
 
 class TestValidateOrder(unittest.TestCase):
     def test_quantity(self):
@@ -145,7 +144,6 @@ class TestValidateOrder(unittest.TestCase):
         self.assertFalse(is_valid)
         self.assertEqual(reason, "insufficient stock for P001")
 
-
 class TestProcessOrder(unittest.TestCase):
     def test_process_order_deducts_stock(self):
         products = {"P001": {"name": "Laptop", "price": 1200, "stock": 10}}
@@ -156,10 +154,10 @@ class TestProcessOrder(unittest.TestCase):
             "items": [{"product_id": "P001", "quantity": 3}],
         }
         result = process_order(order, products)
-        self.assertEqual(result["status"], "paid")
+        self.assertEqual(result["payment_status"], "paid")
         self.assertEqual(products["P001"]["stock"], 7)
 
-    def test_process_order_pending_does_not_deduct_stock(self):
+    def test_process_order_pending_reserves_stock(self):
         products = {"P001": {"name": "Laptop", "price": 1200, "stock": 10}}
         order = {
             "order_id": "P1",
@@ -168,8 +166,8 @@ class TestProcessOrder(unittest.TestCase):
             "items": [{"product_id": "P001", "quantity": 3}],
         }
         result = process_order(order, products)
-        self.assertEqual(result["status"], "pending")
-        self.assertEqual(products["P001"]["stock"], 10)
+        self.assertEqual(result["payment_status"], "pending")
+        self.assertEqual(products["P001"]["stock"], 7)
 
     def test_process_order_rejects_duplicate(self):
         products = {"P001": {"name": "Laptop", "price": 1200, "stock": 10}}
@@ -182,8 +180,8 @@ class TestProcessOrder(unittest.TestCase):
         processed_ids = set()
         first = process_order(order, products, processed_order_ids=processed_ids)
         second = process_order(order, products, processed_order_ids=processed_ids)
-        self.assertEqual(first["status"], "paid")
-        self.assertEqual(second["status"], "rejected")
+        self.assertEqual(first["payment_status"], "paid")
+        self.assertEqual(second["outcome"], "rejected")
         self.assertEqual(second["reason"], "order already processed")
 
     def test_process_order_rejects_unknown_option(self):
@@ -195,7 +193,7 @@ class TestProcessOrder(unittest.TestCase):
             "items": [{"product_id": "P001", "quantity": 1}],
         }
         result = process_order(order, products, apply_discout=False)
-        self.assertEqual(result["status"], "rejected")
+        self.assertEqual(result["outcome"], "rejected")
         self.assertIn("unknown option", result["reason"])
         self.assertEqual(products["P001"]["stock"], 10)
 
@@ -224,6 +222,98 @@ class TestProcessOrder(unittest.TestCase):
         result["items"][0]["quantity"] = 50
         self.assertEqual(order["items"], [{"product_id": "P001", "quantity": 1}])
 
+    def test_second_pending_order_cannot_oversell(self):
+        products = {"P001": {"name": "Laptop", "price": 1200, "stock": 10}}
+        ids = set()
+        first = {
+            "order_id": "A",
+            "customer": "Test",
+            "payment_status": "pending",
+            "items": [{"product_id": "P001", "quantity": 10}],
+        }
+        second = dict(first, order_id="B")
+        a = process_order(first, products, ids)
+        b = process_order(second, products, ids)
+        self.assertEqual(a["outcome"], "accepted")
+        self.assertEqual(b["outcome"], "rejected")
+        self.assertEqual(b["reason"], "insufficient stock for P001")
+
+    def test_shipping_uses_pre_discount_subtotal(self):
+        products = {"P001": {"name": "Chair", "price": 520, "stock": 10}}
+        order = {
+            "order_id": "SH1",
+            "customer": "Test",
+            "payment_status": "paid",
+            "items": [{"product_id": "P001", "quantity": 1}],
+        }
+        r = process_order(order, products)
+        self.assertEqual(r["subtotal"], Decimal("520.00"))
+        self.assertEqual(r["discount"], Decimal("52.00"))
+        self.assertEqual(r["shipping"], 0)
+        self.assertEqual(r["total"], Decimal("468.00"))
+class TestMarkPaid(unittest.TestCase):
+    def setUp(self):
+        self.products = {
+            "P001": {"name": "Laptop", "price": 1200, "stock": 10},
+        }
+
+    def make_pending(self, order_id="ORD1"):
+        return {
+            "order_id": order_id,
+            "customer": "Ali",
+            "payment_status": "pending",
+            "items": [{"product_id": "P001", "quantity": 1}],
+        }
+
+    def test_mark_paid_transitions_pending_to_paid(self):
+        order = self.make_pending()
+        processed = [process_order(order, self.products)]
+        self.assertEqual(processed[0]["payment_status"], "pending")
+        updated, error = mark_paid("ORD1", processed)
+        self.assertEqual(error, "")
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["payment_status"], "paid")
+
+    def test_mark_paid_is_case_and_whitespace_insensitive(self):
+        order = self.make_pending()
+        processed = [process_order(order, self.products)]
+        updated, error = mark_paid(" ord1 ", processed)
+        self.assertEqual(error, "")
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["payment_status"], "paid")
+
+    def test_mark_paid_rejects_already_paid_order(self):
+        order = dict(self.make_pending(), payment_status="paid")
+        processed = [process_order(order, self.products)]
+        self.assertEqual(processed[0]["payment_status"], "paid")
+        updated, error = mark_paid("ORD1", processed)
+        self.assertIsNone(updated)
+        self.assertEqual(error, "order already paid")
+
+    def test_mark_paid_rejects_unknown_order_id(self):
+        processed = [process_order(self.make_pending(), self.products)]
+        updated, error = mark_paid("NOPE", processed)
+        self.assertIsNone(updated)
+        self.assertEqual(error, "order not found")
+
+    def test_mark_paid_rejects_rejected_order(self):
+        bad_order = {
+            "order_id": "ORD2",
+            "customer": "Ali",
+            "payment_status": "paid",
+            "items": [],
+        }
+        processed = [process_order(bad_order, self.products)]
+        self.assertEqual(processed[0]["outcome"], "rejected")
+        updated, error = mark_paid("ORD2", processed)
+        self.assertIsNone(updated)
+        self.assertEqual(error, "order is not pending")
+
+    def test_mark_paid_does_not_change_stock(self):
+        processed = [process_order(self.make_pending(), self.products)]
+        self.assertEqual(self.products["P001"]["stock"], 9)
+        mark_paid("ORD1", processed)
+        self.assertEqual(self.products["P001"]["stock"], 9)
 
 class TestReports(unittest.TestCase):
     def test_revenue_matches_customer_spending(self):
@@ -347,7 +437,6 @@ class TestReports(unittest.TestCase):
         processed = [process_order(o, products) for o in orders]
         self.assertEqual(get_unique_customers(processed), {"Ali"})
 
-
 class TestDisplaySalesReport(unittest.TestCase):
     def test_display_sales_report_no_low_stock(self):
         report = {
@@ -356,6 +445,7 @@ class TestDisplaySalesReport(unittest.TestCase):
             "pending_orders": 0,
             "rejected_orders": 0,
             "total_revenue": 0,
+            "revenue_excl_shipping": 0,
             "total_discounts": 0,
             "shipping_collected": 0,
             "top_customer": [],
@@ -375,6 +465,7 @@ class TestDisplaySalesReport(unittest.TestCase):
             "pending_orders": 0,
             "rejected_orders": 0,
             "total_revenue": 0,
+            "revenue_excl_shipping": 0,
             "total_discounts": 0,
             "shipping_collected": 0,
             "top_customer": [],
@@ -406,7 +497,6 @@ class TestDisplaySalesReport(unittest.TestCase):
             display_sales_report(report)
         self.assertIn("Test", buf.getvalue())
 
-
 class TestEdgeCaseFixes(unittest.TestCase):
     def setUp(self):
         self.products = {
@@ -427,20 +517,22 @@ class TestEdgeCaseFixes(unittest.TestCase):
     def test_nan_price_is_rejected_not_crashed(self):
         self.products["P002"]["price"] = float("nan")
         result = process_order(self.order, self.products, set())
-        self.assertEqual(result["status"], "rejected")
+        self.assertEqual(result["outcome"], "rejected")
         self.assertEqual(result["reason"], "invalid price for P002")
 
     def test_missing_order_id_after_order_named_unknown(self):
         ids = set()
         first = dict(self.order, order_id="Unknown")
-        self.assertEqual(process_order(first, self.products, ids)["status"], "paid")
+        self.assertEqual(
+            process_order(first, self.products, ids)["payment_status"], "paid"
+        )
         no_id = {
             "customer": "Ali",
             "items": self.order["items"],
             "payment_status": "paid",
         }
         result = process_order(no_id, self.products, ids)
-        self.assertEqual(result["status"], "rejected")
+        self.assertEqual(result["outcome"], "rejected")
         self.assertEqual(result["reason"], "missing order_id")
 
     def test_product_report_handles_missing_name(self):
@@ -449,6 +541,13 @@ class TestEdgeCaseFixes(unittest.TestCase):
         report = generate_product_report([result], self.products)
         self.assertEqual(report["P002"]["name"], "P002")
 
+    def test_product_report_survives_deleted_product(self):
+        result = process_order(self.order, self.products, set())
+        del self.products["P002"]
+        report = generate_product_report([result], self.products)
+        self.assertEqual(report, {"P002": {"name": "Mouse", "units_sold": 1}})
+        sales = generate_sales_report([result], self.products)
+        self.assertEqual(sales["top_selling_product"], ["Mouse"])
 
 class TestRecentFixes(unittest.TestCase):
     def setUp(self):
@@ -472,7 +571,7 @@ class TestRecentFixes(unittest.TestCase):
     def test_non_bool_option_is_rejected(self):
         r = process_order(self.make(), self.products, set(), apply_discount="no")
         self.assertEqual(
-            (r["status"], r["reason"]), ("rejected", "apply_discount must be a bool")
+            (r["outcome"], r["reason"]), ("rejected", "apply_discount must be a bool")
         )
         self.assertEqual(self.products["P002"]["stock"], 50)
 
@@ -489,7 +588,8 @@ class TestRecentFixes(unittest.TestCase):
     def test_order_id_whitespace_and_case_are_duplicates(self):
         ids = set()
         self.assertEqual(
-            process_order(self.make("ORD1"), self.products, ids)["status"], "paid"
+            process_order(self.make("ORD1"), self.products, ids)["payment_status"],
+            "paid",
         )
         for dup in ("ORD1 ", "ord1"):
             r = process_order(self.make(dup), self.products, ids)
@@ -517,13 +617,20 @@ class TestRecentFixes(unittest.TestCase):
         r = process_order(self.make("ORD2"), self.products, set())
         self.assertEqual(r["subtotal"], Decimal("0.33"))
 
+    def test_customer_first_spelling_is_kept(self):
+        ids = set()
+        results = [
+            process_order(self.make(f"O{i}", c), self.products, ids)
+            for i, c in enumerate(["mcDonald", "McDonald ", "MCDONALD"])
+        ]
+        self.assertEqual(list(generate_customer_report(results)), ["mcDonald"])
+        self.assertEqual(get_unique_customers(results), {"mcDonald"})
 
 class TestValidateProducts(unittest.TestCase):
     def test_rejects_product_without_category(self):
         products = {"P1": {"name": "Mouse", "price": 25, "stock": 5}}
         with self.assertRaises(ValueError):
             validate_products(products)
-
 
 if __name__ == "__main__":
     unittest.main()
