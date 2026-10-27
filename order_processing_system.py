@@ -148,7 +148,7 @@ def rejected(order_id, customer, reason):
     return {
         "order_id": order_id,
         "customer": customer,
-        "outcome" : "rejected",
+        "outcome": "rejected",
         "payment_status": None,
         "reason": reason,
     }
@@ -214,7 +214,7 @@ def process_order(order, products, processed_order_ids=None, **kwargs):
             for item in order["items"]
         ],
         "payment_status": payment_status,
-        "outcome" : "accepted",
+        "outcome": "accepted",
         "subtotal": subtotal,
         "discount": discount,
         "shipping": shipping,
@@ -229,17 +229,21 @@ def mark_paid(order_id, processed_orders):
     order_id = order_id.strip().upper()
     if not isinstance(processed_orders, list):
         raise TypeError("processed_orders must be a list")
+    found_paid = False
     for processed in processed_orders:
         if not isinstance(processed, dict):
             continue
         if processed.get("order_id") != order_id:
             continue
         if processed.get("payment_status") == "paid":
-            return None, "order already paid"
+            found_paid = True
+            continue
         if processed.get("payment_status") != "pending":
-            return None, "order is not pending"
+            continue
         processed["payment_status"] = "paid"
         return processed, ""
+    if found_paid:
+        return None, "order already paid"
     return None, "order not found"
 
 
@@ -494,4 +498,4 @@ def main(orders, products):
 
 
 if __name__ == "__main__":
-    main(SAMPLE_ORDERS,SAMPLE_PRODUCTS)
+    main(SAMPLE_ORDERS, SAMPLE_PRODUCTS)

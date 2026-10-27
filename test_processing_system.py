@@ -307,7 +307,30 @@ class TestMarkPaid(unittest.TestCase):
         self.assertEqual(processed[0]["outcome"], "rejected")
         updated, error = mark_paid("ORD2", processed)
         self.assertIsNone(updated)
-        self.assertEqual(error, "order is not pending")
+        self.assertEqual(error, "order not found")
+
+    def test_mark_paid_finds_accepted_order_after_same_id_was_rejected(self):
+        rejected_order = {
+            "order_id": "ORD9",
+            "customer": "Ali",
+            "payment_status": "pending",
+            "items": [{"product_id": "P001", "quantity": 50}],
+        }
+        accepted_order = {
+            "order_id": "ORD9",
+            "customer": "Ali",
+            "payment_status": "pending",
+            "items": [{"product_id": "P001", "quantity": 1}],
+        }
+        ids = set()
+        first = process_order(rejected_order, self.products, ids)
+        second = process_order(accepted_order, self.products, ids)
+        self.assertEqual(first["outcome"], "rejected")
+        self.assertEqual(second["outcome"], "accepted")
+        processed = [first, second]
+        updated, error = mark_paid("ORD9", processed)
+        self.assertEqual(error, "")
+        self.assertEqual(updated["payment_status"], "paid")
 
     def test_mark_paid_does_not_change_stock(self):
         processed = [process_order(self.make_pending(), self.products)]

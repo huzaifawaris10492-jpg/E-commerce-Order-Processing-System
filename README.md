@@ -43,7 +43,7 @@ levels, and generates sales and customer reports.
   insufficient stock), duplicate-order rejection, unknown-option rejection,
   pending-order stock reservation, mark_paid, deleted-product reports,
   the `apply_discount` option, tied top customers, and report display.
-   - **Customer names** — trimmed and case-insensitive ("Ali", "Ali " and "ali" are one customer). The first spelling seen is the one shown in reports.
+- **Customer names** — trimmed and case-insensitive ("Ali", "Ali " and "ali" are one customer). The first spelling seen is the one shown in reports.
 
 ## Requirements
 
